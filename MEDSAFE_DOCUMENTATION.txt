@@ -1,0 +1,649 @@
+MEDSAFE PROJECT DOCUMENTATION
+=============================
+
+Version: Demo prototype
+Date: 7 October 2026
+
+
+1. PROJECT OVERVIEW
+-------------------
+
+MedSafe is an elderly-first medication safety prototype for:
+
+- Reviewing a patient's medicine list
+- Highlighting possible drug-drug interactions
+- Highlighting possible drug-food interactions
+- Showing interaction severity and plain-language explanations
+- Reviewing prescription uploads
+- Showing OCR confidence
+- Preparing a doctor-facing summary
+- Visualizing interaction relationships as a knowledge graph
+- Supporting English/Hindi controls
+- Providing optional browser voice playback
+
+IMPORTANT:
+This is a demo clinical decision-support prototype. It is not a diagnosis,
+prescription, treatment recommendation, or replacement for a doctor or
+pharmacist. The current interaction content is demo data and must not be used
+for real clinical decisions.
+
+
+2. WHAT HAS BEEN IMPLEMENTED
+----------------------------
+
+FRONTEND
+
+The frontend is implemented with Next.js, React, TypeScript, and CSS.
+
+Main frontend files:
+
+- app/page.tsx
+  Main application UI and navigation.
+
+- app/layout.tsx
+  Root HTML layout, metadata, and global stylesheet import.
+
+- app/globals.css
+  Responsive visual design, colors, typography, accessibility focus states,
+  responsive breakpoints, cards, modal, graph, and mobile navigation.
+
+- types/css.d.ts
+  TypeScript declaration for CSS side-effect imports.
+
+Frontend features:
+
+- Dashboard with medication safety status
+- High attention alert for Warfarin + Aspirin
+- Moderate attention alert for Warfarin + leafy greens
+- No-known-interaction message for Metformin + Amlodipine
+- My medicines section with dose, frequency, and OCR confidence
+- Safety alerts section
+- Doctor summary section
+- Interaction graph section
+- Responsive desktop and mobile layouts
+- Mobile hamburger navigation
+- Navigation buttons connected to their correct sections
+- Doctor summary navigation from "Show my doctor"
+- Medicine section navigation from "Review my medicines"
+- Prescription upload modal
+- Real file chooser
+- Drag-and-drop file support
+- JPG, PNG, and PDF validation
+- 10 MB file-size validation
+- Image preview for JPG and PNG
+- Selected file name and file-size display
+- Low-confidence OCR review warning
+- Browser SpeechSynthesis voice playback
+- English/Hindi selector foundation
+- Reduced-motion support
+- Visible keyboard focus styling
+- Severity labels that do not depend only on color
+- Demo-data and clinical safety disclaimers
+
+
+BACKEND
+
+The backend is implemented with FastAPI and Pydantic.
+
+Main backend file:
+
+- apps/api/app/main.py
+
+Implemented API routes:
+
+- GET /
+  Returns basic API information.
+
+- GET /api/health
+  Returns API status and demo environment.
+
+- POST /api/interactions/check
+  Accepts medicine and food names and returns matching demo interactions.
+
+- GET /api/interactions/{interaction_id}
+  Returns one demo interaction by ID.
+
+- GET /api/graph
+  Returns demo graph nodes and edges.
+
+Typed backend models include:
+
+- Severity
+- Medicine
+- Interaction
+- CheckRequest
+
+Each interaction includes:
+
+- ID
+- Interaction type
+- Medicine or food values
+- Severity
+- Mechanism
+- Patient message
+- Clinical message
+- Evidence text
+- Last verified date
+- Recommendation
+- Clinician-review flag
+
+
+TESTING
+
+Backend tests:
+
+- apps/api/tests/test_interactions.py
+
+Covered cases:
+
+- Warfarin + Aspirin returns High severity
+- Metformin + Amlodipine returns no matching interaction
+
+Checks completed:
+
+- TypeScript type check
+- Next.js production build
+- Backend pytest suite
+- Browser smoke testing
+- Desktop navigation testing
+- Mobile hamburger navigation testing
+- Prescription upload modal testing
+
+
+3. PROJECT STRUCTURE
+---------------------
+
+app/
+  page.tsx
+  layout.tsx
+  globals.css
+
+apps/api/
+  app/
+    main.py
+  tests/
+    test_interactions.py
+  requirements.txt
+
+types/
+  css.d.ts
+
+.env.example
+README.md
+package.json
+next.config.mjs
+tsconfig.json
+
+
+4. HOW TO RUN LOCALLY
+----------------------
+
+FRONTEND
+
+Open Command Prompt or PowerShell:
+
+    cd x:\final
+    npm.cmd install
+    npm.cmd run dev
+
+Open the URL shown by Next.js.
+
+Normally:
+
+    http://localhost:3000
+
+If port 3000 is already being used, Next.js will automatically use:
+
+    http://localhost:3001
+
+Always use the exact Local URL printed in the terminal.
+
+
+BACKEND
+
+Open a second terminal:
+
+    cd x:\final\apps\api
+    python -m pip install -r requirements.txt
+    python -m uvicorn app.main:app --reload --port 8000
+
+Backend URLs:
+
+    http://127.0.0.1:8000/
+    http://127.0.0.1:8000/api/health
+    http://127.0.0.1:8000/docs
+
+
+TEST COMMANDS
+
+Frontend type check:
+
+    cd x:\final
+    npm.cmd run typecheck
+
+Frontend production build:
+
+    npm.cmd run build
+
+Backend tests:
+
+    cd x:\final\apps\api
+    python -m pytest
+
+
+5. ENVIRONMENT VARIABLES
+------------------------
+
+The file .env.example contains placeholders for:
+
+    DATABASE_URL
+    NEO4J_URI
+    NEO4J_USERNAME
+    NEO4J_PASSWORD
+    OCR_PROVIDER
+    GOOGLE_APPLICATION_CREDENTIALS
+    RXNORM_API_URL
+    OPENAI_API_KEY
+
+The current demo does not require these services or credentials.
+
+Never commit real API keys, database passwords, service-account files, or
+prescription images.
+
+
+6. CURRENT DEMO LIMITATIONS
+---------------------------
+
+The current project is a functional demo prototype, not a production system.
+
+Current limitations:
+
+- Prescription files are selected and previewed in the browser, but they are
+  not sent to a real OCR service.
+
+- OCR results are demo results rather than results extracted from the uploaded
+  prescription.
+
+- The interaction service uses in-memory demo data.
+
+- No PostgreSQL database is connected.
+
+- No Neo4j database is connected.
+
+- No RxNorm/RxCUI normalization service is connected.
+
+- No authenticated users or patient accounts exist.
+
+- No encrypted prescription-file storage exists.
+
+- The frontend currently uses local demo state rather than persistent sessions.
+
+- English/Hindi controls exist as a foundation, but all UI text is not yet
+  fully translated into Hindi.
+
+- The graph is a visual demo and is not loaded from Neo4j.
+
+- The doctor summary is generated from demo data.
+
+- The backend does not yet include production OCR, normalization, user
+  authorization, audit logging, rate limiting, or monitoring.
+
+
+7. WHAT IS REQUIRED FOR REAL-TIME DATA
+--------------------------------------
+
+The following work is required before using real patient data or making the
+system available to clinicians.
+
+
+STEP 1: USE A REAL DATABASE
+
+Add PostgreSQL for application data.
+
+Recommended data:
+
+- users
+- patients
+- patient_consents
+- prescriptions
+- prescription_files
+- extracted_medicines
+- normalized_medicines
+- interaction_checks
+- interaction_results
+- doctor_summaries
+- audit_events
+
+Use migrations with Alembic or an equivalent migration tool.
+
+Do not store important application state only in Python memory.
+
+
+STEP 2: ADD AUTHENTICATION AND AUTHORIZATION
+
+Implement:
+
+- User registration or organization-managed login
+- Secure password handling or an approved identity provider
+- Multi-factor authentication for clinical users
+- Role-based access control
+- Patient/caregiver/doctor/pharmacist roles
+- Patient consent management
+- Session expiration
+- Token rotation
+- Account recovery
+- Access revocation
+
+Every patient record and prescription endpoint must verify that the current
+user is allowed to access that patient's data.
+
+
+STEP 3: CONNECT REAL OCR THROUGH A PROVIDER INTERFACE
+
+Keep OCR provider logic separate from route handlers.
+
+Create an interface similar to:
+
+    OCRProvider.extract_prescription(file) -> OCRResult
+
+Possible providers:
+
+- Google Cloud Vision
+- Azure Document Intelligence
+- AWS Textract
+- A self-hosted OCR service
+
+The OCR result should contain:
+
+- Raw extracted text
+- Medicine candidate
+- Dose
+- Frequency
+- Route
+- Bounding boxes if available
+- Confidence per field
+- Provider name
+- Processing timestamp
+
+Rules:
+
+- Reject unsupported file types
+- Enforce file-size limits
+- Scan uploads for malware
+- Never log prescription images unnecessarily
+- Encrypt files in transit and at rest
+- Require user confirmation for low-confidence medicine names
+- Preserve the original image only when there is a documented reason
+
+
+STEP 4: NORMALIZE MEDICINES TO VERIFIED IDENTITIES
+
+Implement a normalization service that converts OCR text into canonical drug
+identities.
+
+Use RxNorm/RxCUI or another validated medication terminology service.
+
+The normalized record should include:
+
+- canonical_name
+- generic_name
+- rxcui
+- strength
+- dose_form
+- route
+- frequency
+- source_text
+- normalization_confidence
+- match_status
+
+Never silently treat an uncertain OCR match as a confirmed medicine.
+
+Possible statuses:
+
+- confirmed
+- needs_user_confirmation
+- ambiguous
+- not_found
+
+
+STEP 5: USE A VERIFIED INTERACTION DATASET
+
+Do not ask a language model whether medicines interact.
+
+The production flow should be:
+
+    submitted medicines and foods
+        -> normalization
+        -> verified interaction repository
+        -> severity and evidence
+        -> patient-friendly wording
+        -> clinician review message
+
+Interaction records should come from validated sources and include:
+
+- source organization
+- source URL or citation
+- evidence level
+- last reviewed date
+- reviewer
+- interaction type
+- mechanism
+- severity
+- patient explanation
+- clinician explanation
+- recommendation
+- population or contraindication notes
+- clinician-review requirement
+
+Potential sources may include licensed clinical databases or validated
+institutional content. Confirm licensing before use.
+
+
+STEP 6: CONNECT NEO4J FOR THE KNOWLEDGE GRAPH
+
+Use Neo4j for relationships such as:
+
+- medicine -> interacts_with -> medicine
+- medicine -> affected_by -> food
+- food -> contains -> nutrient
+- interaction -> causes -> outcome
+- interaction -> supported_by -> evidence
+
+PostgreSQL should remain the system of record for transactional application
+data. Do not duplicate business rules in both PostgreSQL and Neo4j.
+
+The graph API should read relationships from Neo4j and return a safe,
+versioned response to the frontend.
+
+
+STEP 7: IMPLEMENT REAL-TIME CHECKING
+
+The frontend should call the API after the user confirms the medicine list:
+
+    POST /api/interactions/check
+
+The request should contain normalized medicine IDs and selected foods, not
+only arbitrary display text.
+
+The API should:
+
+- Validate the request
+- Check authorization
+- Create a check record
+- Query the verified interaction service
+- Store the result
+- Return a stable response
+- Include a request ID
+- Report errors explicitly
+
+Use background jobs for slow work such as OCR, graph expansion, or report
+generation. Return a job ID and expose a status endpoint if processing takes
+more than a few seconds.
+
+Example production routes:
+
+- POST /api/prescriptions
+- POST /api/prescriptions/{id}/ocr
+- GET /api/prescriptions/{id}/ocr-status
+- POST /api/medicines/normalize
+- POST /api/interactions/check
+- GET /api/interactions/checks/{id}
+- GET /api/graph
+- POST /api/doctor-summary
+
+
+STEP 8: CONNECT THE FRONTEND TO THE API
+
+Replace the hardcoded frontend demo arrays with typed API service functions.
+
+Recommended structure:
+
+    app/lib/api-client.ts
+    app/lib/interaction-service.ts
+    app/lib/prescription-service.ts
+    app/types/
+
+Use environment configuration:
+
+    NEXT_PUBLIC_API_URL=http://localhost:8000
+
+Handle these UI states:
+
+- checking
+- success
+- no interactions found
+- low-confidence OCR
+- service unavailable
+- network timeout
+- unauthorized
+- invalid file
+- unsupported file type
+
+Never show a blank screen or a success-shaped fallback after an API failure.
+
+
+STEP 9: PROTECT HEALTH DATA
+
+Before real deployment, obtain professional legal and security guidance for
+the applicable jurisdiction.
+
+Implement:
+
+- HTTPS everywhere
+- Encryption at rest
+- Secrets manager
+- Least-privilege service accounts
+- Secure HTTP headers
+- CSRF protection where applicable
+- Input validation
+- File malware scanning
+- Rate limiting
+- Structured security logging
+- Audit trails
+- Data retention and deletion policies
+- Backup and restore procedures
+- Data export procedures
+- Breach response process
+- Production error monitoring without leaking patient information
+
+Do not send identifiable health information to external AI services unless
+there is an approved legal, privacy, security, and contractual basis.
+
+
+STEP 10: CLINICAL VALIDATION
+
+Before clinical use:
+
+- Have qualified clinicians review interaction content.
+- Replace all demo evidence with validated sources.
+- Define severity terminology with clinical stakeholders.
+- Test for false negatives and false positives.
+- Test common brand names and spelling variations.
+- Test duplicate medicines.
+- Test dose and route differences.
+- Test pregnancy, age, renal, and hepatic considerations where applicable.
+- Document intended use and known limitations.
+- Add a clinical safety review process for content updates.
+- Version every interaction dataset.
+
+Do not let the product recommend stopping, starting, substituting, or changing
+medication without clinician involvement.
+
+
+8. PRODUCTION DEPLOYMENT CHECKLIST
+-----------------------------------
+
+Before launch:
+
+[ ] Production database configured
+[ ] Database migrations applied
+[ ] Authentication enabled
+[ ] Authorization tests completed
+[ ] Real OCR provider configured
+[ ] OCR confidence workflow validated
+[ ] RxNorm normalization connected
+[ ] Verified interaction source licensed
+[ ] Interaction content clinically reviewed
+[ ] Neo4j configured if graph is required
+[ ] Frontend API URL configured
+[ ] HTTPS enabled
+[ ] Secrets stored outside source control
+[ ] Upload malware scanning enabled
+[ ] Audit logging enabled
+[ ] Monitoring and alerting enabled
+[ ] Backup and restore tested
+[ ] Privacy and retention policy approved
+[ ] Accessibility audit completed
+[ ] Security review completed
+[ ] Clinical safety review completed
+[ ] Load and failure testing completed
+[ ] Demo data removed from production
+[ ] Safety disclaimer reviewed
+
+
+9. IMPORTANT URLS FOR LOCAL DEVELOPMENT
+----------------------------------------
+
+Frontend:
+
+    http://localhost:3000
+
+If port 3000 is busy:
+
+    http://localhost:3001
+
+Backend:
+
+    http://127.0.0.1:8000
+
+Health:
+
+    http://127.0.0.1:8000/api/health
+
+Interactive API documentation:
+
+    http://127.0.0.1:8000/docs
+
+
+10. FINAL STATUS
+----------------
+
+Current status:
+
+    Demo-ready prototype: YES
+    Frontend working locally: YES
+    Backend working locally: YES
+    Backend tests passing: YES
+    Real-time clinical data integration: NOT YET
+    Production medical deployment: NOT YET
+
+The safest next engineering milestone is:
+
+1. Add PostgreSQL and migrations.
+2. Add authenticated users and authorization.
+3. Add a real OCR provider adapter.
+4. Add RxNorm normalization.
+5. Connect a clinically validated interaction source.
+6. Replace frontend demo arrays with API calls.
+7. Complete security and clinical validation before real patient use.
+
