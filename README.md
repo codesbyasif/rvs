@@ -39,6 +39,23 @@ uvicorn app.main:app --reload --port 8000
 
 Run API tests from `apps/api` with `pytest`.
 
+### MongoDB authentication setup
+
+Copy `.env.example` to `.env` and set `MONGODB_URI`, `MONGODB_DATABASE`, and a
+long random `JWT_SECRET`. The API exposes:
+
+- `POST /api/auth/signup`
+- `POST /api/auth/login`
+- `POST /api/auth/forgot-password`
+- `POST /api/auth/reset-password`
+
+The frontend auth screens are available at `/login` and `/reset-password`.
+Forgot-password requests intentionally return a development reset token only
+when `APP_ENV=development`; configure a transactional email provider before
+using this in production. Authentication is real MongoDB-backed when
+`MONGODB_URI` is configured; without it, auth endpoints return an explicit
+service-unavailable response rather than pretending to persist users.
+
 ## Architecture and safety
 
 The UI currently uses a typed demo dataset so the product can be demonstrated without credentials. The FastAPI interaction schema is designed for a verified interaction repository, with `evidence`, `last_verified`, and `requires_clinician_review` required on every interaction. A production integration should add PostgreSQL repositories, Neo4j graph persistence, RxNorm normalization, and an OCR provider adapter behind the API; it must not silently replace demo data with unvalidated LLM output.
