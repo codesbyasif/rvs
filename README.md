@@ -5,6 +5,7 @@ MedSafe is a calm, elderly-first prototype for understanding possible drug-drug 
 ## What is included
 
 - Responsive Next.js/React/TypeScript experience with dashboard, medicines, safety alerts, interaction graph, and doctor summary views.
+- Doctor signup prototype at `/doctor-signup` with required medical credential and current-workplace proof fields for manual verification.
 - A prescription upload/review flow with explicit OCR confidence and low-confidence confirmation state.
 - Browser voice playback for important explanations.
 - English/Hindi language controls in the UI foundation.
@@ -40,6 +41,12 @@ uvicorn app.main:app --reload --port 8000
 Run API tests from `apps/api` with `pytest`.
 
 ## Architecture and safety
+
+Doctor signup submissions are saved by `POST /api/doctor-applications`. The route stores uniquely named documents and an append-only `uploads/doctor-applications.jsonl` record in the project root. The directory is created on first submission. Treat this local prototype storage as sensitive: configure access controls, retention, backups, and a secure deployment storage strategy before collecting real clinician documents.
+
+## Admin doctor verification
+
+Open `/admin` (also linked from the home page) to sign in, review submitted doctor details and documents, then mark an application verified or rejected. Configure only `ADMIN_REVIEW_PASSWORD` (at least 12 characters; 16 or more is recommended) in `.env.local`, then restart the dev server. Keep the password private. The admin session is an HttpOnly, SameSite=Strict cookie with an eight-hour lifetime, signed using the configured password; changing the password invalidates existing sessions. This single-password approach is intended only for a local prototype, not a production admin system. Approval verifies application credentials for this prototype only; it does not automatically create or promise a consultant job.
 
 The UI currently uses a typed demo dataset so the product can be demonstrated without credentials. The FastAPI interaction schema is designed for a verified interaction repository, with `evidence`, `last_verified`, and `requires_clinician_review` required on every interaction. A production integration should add PostgreSQL repositories, Neo4j graph persistence, RxNorm normalization, and an OCR provider adapter behind the API; it must not silently replace demo data with unvalidated LLM output.
 
