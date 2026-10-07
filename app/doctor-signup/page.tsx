@@ -77,7 +77,7 @@ export default function DoctorSignupPage() {
 
   return <main className="signup-page">
     <header className="signup-topbar">
-      <Link className="brand" href="/"><span className="brand-mark"><ShieldCheck size={22} /></span><span>Med<span>Safe</span></span></Link>
+      <Link className="brand" href="/"><span className="brand-mark"><img src="/medsafe-logo.svg" alt="" /></span><span>Med<span>Safe</span></span></Link>
       <Link className="signup-back" href="/"><ArrowLeft size={16} /> Back to home</Link>
     </header>
 

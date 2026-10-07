@@ -1,7 +1,7 @@
 # Environment variables and secrets
 .env
 .env.*
-.env.example
+!.env.example
 *.pem
 *.key
 *.p12
@@ -87,4 +87,3 @@ blob-report/
 *.swp
 *.swo
 *.tmp
-.env.example 

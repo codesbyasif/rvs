@@ -3,7 +3,8 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "dev:all": "concurrently -k -n WEB,API -c blue,green \"npm.cmd run dev\" \"python -m uvicorn app.main:app --reload --port 8000 --app-dir apps/api\"",
+    "dev:all": "concurrently -k -n WEB,API -c blue,green \"npm.cmd run dev\" \".\\apps\\api\\.venv\\Scripts\\python.exe -m uvicorn app.main:app --reload --port 8000 --app-dir apps/api\"",
+    "setup:api": "python -m venv apps/api/.venv && .\\apps\\api\\.venv\\Scripts\\python.exe -m pip install -r apps/api/requirements.txt",
     "build": "next build",
     "lint": "next lint",
     "typecheck": "tsc --noEmit"

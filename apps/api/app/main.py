@@ -1,11 +1,97 @@
-from datetime import date
+import hashlib
+import hmac
+import logging
+import os
+import secrets
+import smtplib
+import ssl
+from datetime import date, datetime, timedelta, timezone
+from email.message import EmailMessage
 from enum import Enum
+from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
-from fastapi import FastAPI
-from pydantic import BaseModel, Field
+import jwt
+from dotenv import load_dotenv
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, EmailStr, Field
+from pymongo import MongoClient
+from pymongo.errors import DuplicateKeyError, PyMongoError
 
+load_dotenv(Path(__file__).resolve().parents[3] / ".env")
 app = FastAPI(title="MedSafe API", version="0.1.0")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[origin.strip() for origin in os.getenv("FRONTEND_ORIGINS", "http://localhost:3000,http://localhost:3001,http://localhost:3002").split(",")],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+JWT_ALGORITHM = "HS256"
+JWT_TTL_MINUTES = 60
+
+
+@lru_cache(maxsize=1)
+def get_database():
+    uri = os.getenv("MONGODB_URI")
+    database_name = os.getenv("MONGODB_DATABASE", "medsafe")
+    if not uri:
+        raise HTTPException(status_code=503, detail="MONGODB_URI is not configured.")
+    try:
+        client = MongoClient(uri, serverSelectionTimeoutMS=5000, connectTimeoutMS=5000)
+        client.admin.command("ping")
+        database = client[database_name]
+        database.users.create_index("email", unique=True)
+        database.password_resets.create_index("expires_at", expireAfterSeconds=0)
+        database.password_resets.create_index([("email", 1), ("requested_at", -1)])
+        return database
+    except PyMongoError as error:
+        raise HTTPException(status_code=503, detail="Unable to connect to MongoDB.") from error
+
+
+def password_digest(password: str, salt: str | None = None) -> str:
+    actual_salt = salt or secrets.token_hex(16)
+    digest = hashlib.scrypt(password.encode(), salt=bytes.fromhex(actual_salt), n=2**14, r=8, p=1)
+    return f"{actual_salt}${digest.hex()}"
+
+
+def password_matches(password: str, stored: str) -> bool:
+    salt, expected = stored.split("$", 1)
+    return secrets.compare_digest(password_digest(password, salt).split("$", 1)[1], expected)
+
+
+def issue_token(user_id: str, email: str) -> str:
+    now = datetime.now(timezone.utc)
+    return jwt.encode({"sub": user_id, "email": email, "iat": now, "exp": now + timedelta(minutes=JWT_TTL_MINUTES)}, os.getenv("JWT_SECRET", "development-only-change-me"), algorithm=JWT_ALGORITHM)
+
+
+class AuthRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=8, max_length=128)
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str = Field(min_length=20)
+    password: str = Field(min_length=8, max_length=128)
+
+
+class OtpResetPasswordRequest(BaseModel):
+    email: EmailStr
+    otp: str = Field(pattern=r"^\d{6}$")
+    password: str = Field(min_length=8, max_length=128)
+
+
+class AuthResponse(BaseModel):
+    access_token: str
+    token_type: Literal["bearer"] = "bearer"
+    email: EmailStr
 
 
 class Severity(str, Enum):
@@ -88,7 +174,163 @@ def root() -> dict[str, str]:
 
 @app.get("/api/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "environment": "demo"}
+    return {"status": "ok", "environment": os.getenv("APP_ENV", "development")}
+
+
+@app.post("/api/auth/signup", response_model=AuthResponse, status_code=201)
+def signup(request: AuthRequest) -> AuthResponse:
+    database = get_database()
+    email = str(request.email).lower()
+    try:
+        result = database.users.insert_one({"email": email, "password_hash": password_digest(request.password), "created_at": datetime.now(timezone.utc)})
+    except DuplicateKeyError as error:
+        raise HTTPException(status_code=409, detail="An account with this email already exists.") from error
+    return AuthResponse(access_token=issue_token(str(result.inserted_id), email), email=email)
+
+
+@app.post("/api/auth/login", response_model=AuthResponse)
+def login(request: AuthRequest) -> AuthResponse:
+    database = get_database()
+    email = str(request.email).lower()
+    user = database.users.find_one({"email": email})
+    if not user or not password_matches(request.password, user["password_hash"]):
+        raise HTTPException(status_code=401, detail="Invalid email or password.")
+    return AuthResponse(access_token=issue_token(str(user["_id"]), email), email=email)
+
+
+@app.post("/api/auth/forgot-password")
+def forgot_password(request: ForgotPasswordRequest) -> dict[str, str]:
+    smtp_host = os.getenv("SMTP_HOST")
+    sender = os.getenv("SMTP_FROM_EMAIL")
+    if not smtp_host or not sender:
+        raise HTTPException(status_code=503, detail="Email delivery is not configured. Set SMTP_HOST and SMTP_FROM_EMAIL in the project .env file.")
+    try:
+        smtp_port = int(os.getenv("SMTP_PORT", "587"))
+    except ValueError as error:
+        raise HTTPException(status_code=503, detail="SMTP_PORT must be a valid port number.") from error
+    if not 1 <= smtp_port <= 65535:
+        raise HTTPException(status_code=503, detail="SMTP_PORT must be between 1 and 65535.")
+    smtp_username = os.getenv("SMTP_USERNAME")
+    smtp_password = os.getenv("SMTP_PASSWORD")
+    if bool(smtp_username) != bool(smtp_password):
+        raise HTTPException(status_code=503, detail="Set both SMTP_USERNAME and SMTP_PASSWORD, or leave both blank for an unauthenticated mail relay.")
+    jwt_secret = os.getenv("JWT_SECRET")
+    if not jwt_secret or len(jwt_secret) < 32:
+        raise HTTPException(status_code=503, detail="JWT_SECRET must be configured with at least 32 characters before sending reset codes.")
+
+    database = get_database()
+    email = str(request.email).lower()
+    response = {"message": "If an account exists, password reset instructions will be sent."}
+    now = datetime.now(timezone.utc)
+    recent_request = database.password_resets.find_one({
+        "email": email,
+        "purpose": "email_otp",
+        "requested_at": {"$gt": now - timedelta(seconds=60)}
+    })
+    if recent_request:
+        return response
+
+    user = database.users.find_one({"email": email})
+    if not user:
+        return response
+
+    otp = f"{secrets.randbelow(1_000_000):06d}"
+    otp_hash = hmac.new(jwt_secret.encode(), f"{email}:{otp}".encode(), hashlib.sha256).hexdigest()
+    database.password_resets.delete_many({"user_id": user["_id"]})
+    reset_record = {
+        "user_id": user["_id"],
+        "email": email,
+        "purpose": "email_otp",
+        "otp_hash": otp_hash,
+        "attempts": 0,
+        "requested_at": now,
+        "expires_at": now + timedelta(minutes=10)
+    }
+    inserted = database.password_resets.insert_one(reset_record)
+
+    message = EmailMessage()
+    message["Subject"] = "Your MedSafe password reset code"
+    message["From"] = sender
+    message["To"] = email
+    message.set_content(
+        f"Your MedSafe password reset code is {otp}.\n\n"
+        "This code expires in 10 minutes and can only be used once. "
+        "If you did not request a password reset, you can ignore this email."
+    )
+    use_ssl = os.getenv("SMTP_USE_SSL", "false").strip().casefold() in {"1", "true", "yes"}
+    try:
+        if use_ssl:
+            with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=10, context=ssl.create_default_context()) as server:
+                if smtp_username:
+                    server.login(smtp_username, smtp_password or "")
+                server.send_message(message)
+        else:
+            with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as server:
+                server.ehlo()
+                server.starttls(context=ssl.create_default_context())
+                server.ehlo()
+                if smtp_username:
+                    server.login(smtp_username, smtp_password or "")
+                server.send_message(message)
+    except (OSError, smtplib.SMTPException) as error:
+        database.password_resets.delete_one({"_id": inserted.inserted_id})
+        logging.exception("Failed to deliver a password reset email.")
+        raise HTTPException(status_code=503, detail="Could not send the reset email. Check the SMTP settings and try again.") from error
+    return response
+
+
+@app.post("/api/auth/reset-password/otp")
+def reset_password_with_otp(request: OtpResetPasswordRequest) -> dict[str, str]:
+    jwt_secret = os.getenv("JWT_SECRET")
+    if not jwt_secret or len(jwt_secret) < 32:
+        raise HTTPException(status_code=503, detail="JWT_SECRET must be configured with at least 32 characters before verifying reset codes.")
+
+    database = get_database()
+    email = str(request.email).lower()
+    now = datetime.now(timezone.utc)
+    reset = database.password_resets.find_one({
+        "email": email,
+        "purpose": "email_otp",
+        "expires_at": {"$gt": now}
+    })
+    if not reset:
+        raise HTTPException(status_code=400, detail="This code is invalid or expired. Request a new code.")
+    if reset.get("attempts", 0) >= 5:
+        raise HTTPException(status_code=429, detail="Too many incorrect codes. Request a new reset code.")
+
+    expected_hash = hmac.new(jwt_secret.encode(), f"{email}:{request.otp}".encode(), hashlib.sha256).hexdigest()
+    if not secrets.compare_digest(expected_hash, reset["otp_hash"]):
+        database.password_resets.update_one({"_id": reset["_id"]}, {"$inc": {"attempts": 1}})
+        raise HTTPException(status_code=400, detail="This code is invalid or expired. Check the code and try again.")
+
+    consumed = database.password_resets.find_one_and_delete({
+        "_id": reset["_id"],
+        "otp_hash": expected_hash,
+        "attempts": {"$lt": 5},
+        "expires_at": {"$gt": now}
+    })
+    if not consumed:
+        raise HTTPException(status_code=400, detail="This code is invalid or expired. Request a new code.")
+    updated = database.users.update_one(
+        {"_id": reset["user_id"]},
+        {"$set": {"password_hash": password_digest(request.password)}}
+    )
+    if updated.matched_count != 1:
+        raise HTTPException(status_code=400, detail="The account for this reset code could not be found.")
+    database.password_resets.delete_many({"user_id": reset["user_id"]})
+    return {"message": "Password updated. You can now sign in."}
+
+
+@app.post("/api/auth/reset-password")
+def reset_password(request: ResetPasswordRequest) -> dict[str, str]:
+    database = get_database()
+    token_hash = hashlib.sha256(request.token.encode()).hexdigest()
+    reset = database.password_resets.find_one({"token_hash": token_hash, "expires_at": {"$gt": datetime.now(timezone.utc)}})
+    if not reset:
+        raise HTTPException(status_code=400, detail="This reset link is invalid or expired.")
+    database.users.update_one({"_id": reset["user_id"]}, {"$set": {"password_hash": password_digest(request.password)}})
+    database.password_resets.delete_many({"user_id": reset["user_id"]})
+    return {"message": "Password updated. You can now sign in."}
 
 
 @app.post("/api/interactions/check", response_model=list[Interaction])

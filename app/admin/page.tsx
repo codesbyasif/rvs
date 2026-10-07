@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { FormEvent, useEffect, useState } from "react";
-import { ArrowLeft, CheckCircle2, ClipboardCheck, FileCheck2, LogOut, ShieldCheck, XCircle } from "lucide-react";
+import { ArrowLeft, CheckCircle2, ClipboardCheck, Eye, EyeOff, FileCheck2, LogOut, ShieldCheck, XCircle } from "lucide-react";
 
 type Status = "pending_manual_verification" | "approved" | "rejected";
 type DocumentField = "qualification_cert" | "workplace_proof";
@@ -31,6 +31,7 @@ export default function AdminPage() {
   const [authenticated, setAuthenticated] = useState(false);
   const [checkingSession, setCheckingSession] = useState(true);
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [applications, setApplications] = useState<Application[]>([]);
   const [error, setError] = useState("");
   const [busyId, setBusyId] = useState("");
@@ -102,7 +103,7 @@ export default function AdminPage() {
 
   return <main className="admin-page">
     <header className="signup-topbar">
-      <Link className="brand" href="/"><span className="brand-mark"><ShieldCheck size={22} /></span><span>Med<span>Safe</span></span></Link>
+      <Link className="brand" href="/"><span className="brand-mark"><img src="/medsafe-logo.svg" alt="" /></span><span>Med<span>Safe</span></span></Link>
       <Link className="signup-back" href="/"><ArrowLeft size={16} /> Back to home</Link>
     </header>
     <div className="admin-content">
@@ -111,10 +112,10 @@ export default function AdminPage() {
         <div className="admin-login-icon"><ShieldCheck size={23} /></div>
         <h2>Admin sign in</h2>
         <p className="muted">Use the review password configured by the project administrator.</p>
-        <label className="signup-field"><span>Admin review password</span><input type="password" value={password} onChange={event => setPassword(event.target.value)} autoComplete="current-password" required /></label>
+        <label className="signup-field"><span>Admin review password</span><span className="password-field"><input type={showPassword ? "text" : "password"} value={password} onChange={event => setPassword(event.target.value)} autoComplete="current-password" required /><button type="button" className="password-toggle" onClick={() => setShowPassword(current => !current)} aria-label={showPassword ? "Hide admin password" : "Show admin password"}>{showPassword ? <EyeOff size={18} /> : <Eye size={18} />}</button></span></label>
         {error && <p className="admin-error" role="alert">{error}</p>}
         <button className="button primary admin-login-button" type="submit">Sign in to review</button>
-        <p className="admin-setup-hint">Set <code>ADMIN_REVIEW_PASSWORD</code> in the project’s <code>.env.local</code> file, then restart the dev server.</p>
+        
       </form> : <section className="admin-dashboard">
         <div className="admin-dashboard-heading"><div><h2>Applications</h2><p className="muted">Check each document against the doctor’s registration details and current workplace.</p></div><button className="button secondary" onClick={signOut}><LogOut size={16} /> Sign out</button></div>
         {error && <p className="admin-error" role="alert">{error}</p>}

@@ -30,7 +30,9 @@ export async function POST(request: Request) {
     return response;
   } catch (error) {
     console.error("Admin sign-in is not configured.", error);
-    return Response.json({ error: "Admin sign-in is not configured. Set the required server environment variables." }, { status: 503 });
+    return Response.json({
+      error: error instanceof Error ? error.message : "get the password from Admin."
+    }, { status: 503 });
   }
 }
 
