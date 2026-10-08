@@ -1,5 +1,6 @@
 import hashlib
 import hmac
+import json
 import logging
 import os
 import secrets
@@ -12,14 +13,18 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
+import httpx
 import jwt
-from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from dotenv import dotenv_values, load_dotenv
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, EmailStr, Field
+from openai import APIConnectionError, APIStatusError, APITimeoutError, OpenAI
+from pydantic import BaseModel, EmailStr, Field, ValidationError
 from pymongo import MongoClient
 from pymongo.errors import DuplicateKeyError, PyMongoError
 
+BACKEND_ENV_PATH = Path(__file__).resolve().parents[1] / ".env"
+load_dotenv(BACKEND_ENV_PATH)
 load_dotenv(Path(__file__).resolve().parents[3] / ".env")
 app = FastAPI(title="MedSafe API", version="0.1.0")
 app.add_middleware(
@@ -32,6 +37,16 @@ app.add_middleware(
 
 JWT_ALGORITHM = "HS256"
 JWT_TTL_MINUTES = 60
+MAX_PRESCRIPTION_SIZE = 10 * 1024 * 1024
+MAX_OCR_TEXT_LENGTH = 30_000
+OCR_SPACE_URL = "https://api.ocr.space/parse/image"
+GROQ_BASE_URL = "https://api.groq.com/openai/v1"
+GROQ_MODEL = "openai/gpt-oss-20b"
+PRESCRIPTION_FILENAMES = {
+    "image/jpeg": "prescription.jpg",
+    "image/png": "prescription.png",
+    "application/pdf": "prescription.pdf",
+}
 
 
 @lru_cache(maxsize=1)
@@ -132,6 +147,24 @@ class CheckRequest(BaseModel):
     foods: list[str] = []
 
 
+class PrescriptionMedicineAnalysis(BaseModel):
+    medicine_name: str = Field(min_length=1)
+    strength: str | None = None
+    dosage: str | None = None
+    frequency: str | None = None
+    timing: str | None = None
+    duration: str | None = None
+    instructions: str | None = None
+
+
+class PrescriptionAnalysis(BaseModel):
+    medicines: list[PrescriptionMedicineAnalysis] = Field(default_factory=list)
+    side_effects: list[str] = Field(default_factory=list)
+    drug_drug_interactions: list[str] = Field(default_factory=list)
+    drug_food_interactions: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
 INTERACTIONS = [
     Interaction(
         id="demo-warfarin-aspirin",
@@ -162,6 +195,145 @@ INTERACTIONS = [
 ]
 
 
+def extract_prescription_text(image: bytes, content_type: str) -> str:
+    api_key = provider_api_key("OCR_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=503, detail="OCR_API_KEY is not configured in the backend .env file.")
+
+    try:
+        with httpx.Client(timeout=httpx.Timeout(60.0, connect=10.0)) as client:
+            response = client.post(
+                OCR_SPACE_URL,
+                headers={"apikey": api_key},
+                data={"language": "eng", "isOverlayRequired": "false"},
+                files={"file": (PRESCRIPTION_FILENAMES[content_type], image, content_type)},
+            )
+            response.raise_for_status()
+            payload = response.json()
+    except httpx.TimeoutException as error:
+        logging.warning("OCR.space request timed out.")
+        raise HTTPException(status_code=504, detail="The OCR service took too long. Please try again.") from error
+    except httpx.HTTPStatusError as error:
+        logging.warning("OCR.space returned HTTP status %s.", error.response.status_code)
+        detail = provider_error_detail(error.response, "OCR.space", "could not process this prescription")
+        raise HTTPException(status_code=502, detail=detail) from error
+    except httpx.RequestError as error:
+        logging.warning("Could not reach OCR.space.")
+        raise HTTPException(status_code=502, detail="The OCR service is temporarily unavailable. Please try again.") from error
+    except ValueError as error:
+        logging.warning("OCR.space returned an invalid response.")
+        raise HTTPException(status_code=502, detail="The OCR service returned an invalid response.") from error
+
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=502, detail="The OCR service returned an invalid response.")
+    if payload.get("IsErroredOnProcessing"):
+        provider_message = payload.get("ErrorMessage")
+        if isinstance(provider_message, list):
+            provider_message = "; ".join(str(message) for message in provider_message)
+        if isinstance(provider_message, str) and provider_message.strip():
+            raise HTTPException(
+                status_code=422,
+                detail=f"OCR.space could not read this file: {provider_message[:240]}",
+            )
+        raise HTTPException(status_code=422, detail="The OCR service could not read this file. Try a clearer image.")
+    parsed_results = payload.get("ParsedResults")
+    if not isinstance(parsed_results, list):
+        raise HTTPException(status_code=502, detail="The OCR service returned an invalid response.")
+    return "\n".join(
+        result.get("ParsedText", "").strip()
+        for result in parsed_results
+        if isinstance(result, dict) and isinstance(result.get("ParsedText"), str)
+    ).strip()
+
+
+def analyze_prescription_text(ocr_text: str) -> PrescriptionAnalysis:
+    api_key = provider_api_key("GROQ_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=503, detail="GROQ_API_KEY is not configured in the backend .env file.")
+
+    system_prompt = (
+        "You help a patient understand text transcribed from a prescription. "
+        "Return only valid JSON matching the requested fields. Extract medicine details "
+        "only when supported by the text; use null for unknown medicine details and empty "
+        "arrays when no information is available. Do not guess. Interaction and side-effect "
+        "information is general and unverified; include uncertainty in warnings."
+    )
+    requested_shape = {
+        "medicines": [{
+            "medicine_name": "string",
+            "strength": "string or null",
+            "dosage": "string or null",
+            "frequency": "string or null",
+            "timing": "string or null",
+            "duration": "string or null",
+            "instructions": "string or null",
+        }],
+        "side_effects": ["string"],
+        "drug_drug_interactions": ["string"],
+        "drug_food_interactions": ["string"],
+        "warnings": ["string"],
+    }
+    try:
+        client = OpenAI(
+            api_key=api_key,
+            base_url=GROQ_BASE_URL,
+            timeout=45.0,
+            max_retries=0,
+        )
+        response = client.responses.create(
+            model=GROQ_MODEL,
+            instructions=system_prompt,
+            input=(
+                f"Analyze this OCR text and return only JSON with this shape: "
+                f"{json.dumps(requested_shape)}\n\nOCR text:\n{ocr_text}"
+            ),
+        )
+        content = response.output_text
+    except APITimeoutError as error:
+        logging.warning("Groq API request timed out.")
+        raise HTTPException(status_code=504, detail="The analysis service took too long. Please try again.") from error
+    except APIStatusError as error:
+        logging.warning("Groq API returned HTTP status %s.", error.status_code)
+        detail = provider_error_detail(error.response, "Groq", "could not analyze this prescription")
+        raise HTTPException(status_code=502, detail=detail) from error
+    except APIConnectionError as error:
+        logging.warning("Could not reach the Groq API.")
+        raise HTTPException(status_code=502, detail="The analysis service is temporarily unavailable. Please try again.") from error
+    try:
+        if not isinstance(content, str):
+            raise ValueError("The model response content was not text.")
+        return PrescriptionAnalysis.model_validate(json.loads(content))
+    except (KeyError, IndexError, TypeError, ValueError, ValidationError) as error:
+        logging.warning("Groq API returned analysis that did not match the expected structure.")
+        raise HTTPException(status_code=502, detail="The analysis service returned an invalid result. Please try again.") from error
+
+
+def provider_error_detail(response: httpx.Response, provider: str, fallback: str) -> str:
+    message = ""
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = None
+
+    if isinstance(payload, dict):
+        error = payload.get("error")
+        if isinstance(error, dict):
+            message = error.get("message", "") if isinstance(error.get("message"), str) else ""
+        elif isinstance(error, str):
+            message = error
+        if not message and isinstance(payload.get("message"), str):
+            message = payload["message"]
+
+    summary = message.strip().replace("\n", " ")[:240]
+    if summary:
+        return f"{provider} request failed (HTTP {response.status_code}): {summary}"
+    return f"{provider} request failed (HTTP {response.status_code}) and {fallback}."
+
+
+def provider_api_key(name: str) -> str:
+    return dotenv_values(BACKEND_ENV_PATH).get(name, "").strip()
+
+
 @app.get("/")
 def root() -> dict[str, str]:
     return {
@@ -175,6 +347,40 @@ def root() -> dict[str, str]:
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "environment": os.getenv("APP_ENV", "development")}
+
+
+@app.post("/api/prescription/analyze")
+def analyze_prescription(file: UploadFile = File(...)) -> dict[str, object]:
+    content_type = file.content_type or ""
+    signatures = {
+        "image/jpeg": lambda content: content.startswith(b"\xff\xd8\xff"),
+        "image/png": lambda content: content.startswith(b"\x89PNG\r\n\x1a\n"),
+        "application/pdf": lambda content: content.startswith(b"%PDF-"),
+    }
+    signature_check = signatures.get(content_type)
+    if signature_check is None:
+        raise HTTPException(status_code=415, detail="Upload a JPG, PNG, or PDF prescription.")
+
+    image = file.file.read(MAX_PRESCRIPTION_SIZE + 1)
+    if not image:
+        raise HTTPException(status_code=400, detail="The uploaded prescription is empty.")
+    if len(image) > MAX_PRESCRIPTION_SIZE:
+        raise HTTPException(status_code=413, detail="The prescription file must be 10 MB or smaller.")
+    if not signature_check(image):
+        raise HTTPException(status_code=415, detail="The file contents do not match a supported prescription format.")
+
+    if not provider_api_key("OCR_API_KEY"):
+        raise HTTPException(status_code=503, detail="OCR_API_KEY is not configured in the backend .env file.")
+    if not provider_api_key("GROQ_API_KEY"):
+        raise HTTPException(status_code=503, detail="GROQ_API_KEY is not configured in the backend .env file.")
+
+    ocr_text = extract_prescription_text(image, content_type)
+    if not ocr_text.strip():
+        raise HTTPException(status_code=422, detail="No prescription text could be read. Try a clearer image.")
+    if len(ocr_text) > MAX_OCR_TEXT_LENGTH:
+        raise HTTPException(status_code=422, detail="The extracted text is too long to analyze safely.")
+    analysis = analyze_prescription_text(ocr_text)
+    return {"ocr_text": ocr_text, "analysis": analysis.model_dump()}
 
 
 @app.post("/api/auth/signup", response_model=AuthResponse, status_code=201)

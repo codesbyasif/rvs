@@ -6,7 +6,7 @@ MedSafe is a calm, elderly-first prototype for understanding possible drug-drug 
 
 - Responsive Next.js/React/TypeScript experience with dashboard, medicines, safety alerts, interaction graph, and doctor summary views.
 - Doctor signup prototype at `/doctor-signup` with required medical credential and current-workplace proof fields for manual verification.
-- A prescription upload/review flow with explicit OCR confidence and low-confidence confirmation state.
+- A prescription upload and OCR/Groq analysis flow with extracted text, medicine details, possible interactions, and safety warnings.
 - Browser voice playback for important explanations.
 - English/Hindi language controls in the UI foundation.
 - FastAPI demo interaction service with typed Pydantic schemas and a provider-ready boundary.
@@ -18,7 +18,7 @@ MedSafe is a calm, elderly-first prototype for understanding possible drug-drug 
 app/                    Next.js UI and design system
 apps/api/app/main.py    FastAPI demo service
 apps/api/tests/         API tests
-.env.example            Local-only environment placeholders
+apps/api/.env.example   Backend OCR and Groq environment template
 ```
 
 ## Run locally
@@ -33,6 +33,23 @@ Open `http://localhost:3000`. To run both the web app and API together, use
 `npm run dev:all` after the one-time API setup. The API setup creates a local
 virtual environment and installs `apps/api/requirements.txt`.
 
+For prescription analysis, copy `apps/api/.env.example` to `apps/api/.env` and
+set `OCR_API_KEY` and `GROQ_API_KEY` there. Obtain the OCR key from OCR.space
+and the Groq key from GroqCloud. The API uses Groq's Responses API with the
+`openai/gpt-oss-20b` model. These credentials are read only from the backend
+`.env`; do not add them to the frontend project `.env` or to `NEXT_PUBLIC_*`
+variables.
+The upload endpoint accepts JPG, PNG, and PDF files up to 10 MB, processes
+them without saving them in the MedSafe application, and sends them to
+OCR.space followed by the Groq API. Both external providers receive
+prescription data for processing.
+
+`POST /api/prescription/analyze` accepts a multipart form field named `file`.
+Its JSON response contains `ocr_text` and an `analysis` object with medicines,
+side effects, possible drug-drug and drug-food interactions, and warnings.
+Run API tests from `apps/api` with
+`.\.venv\Scripts\python.exe -m pytest tests`.
+
 To set up the API manually instead:
 
 ```powershell
@@ -42,8 +59,6 @@ python -m venv .venv
 pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8000
 ```
-
-Run API tests from `apps/api` with `pytest`.
 
 ### MongoDB authentication setup
 
@@ -76,9 +91,9 @@ Doctor signup submissions are saved by `POST /api/doctor-applications`. The rout
 
 Open `/admin` (also linked from the home page) to sign in, review submitted doctor details and documents, then mark an application verified or rejected. Configure only `ADMIN_REVIEW_PASSWORD` (at least 12 characters; 16 or more is recommended) in the project-root `.env`, then restart the dev server. Keep the password private. The admin session is an HttpOnly, SameSite=Strict cookie with an eight-hour lifetime, signed using the configured password; changing the password invalidates existing sessions. This single-password approach is intended only for a local prototype, not a production admin system. Approval verifies application credentials for this prototype only; it does not automatically create or promise a consultant job.
 
-The UI currently uses a typed demo dataset so the product can be demonstrated without credentials. The FastAPI interaction schema is designed for a verified interaction repository, with `evidence`, `last_verified`, and `requires_clinician_review` required on every interaction. A production integration should add PostgreSQL repositories, Neo4j graph persistence, RxNorm normalization, and an OCR provider adapter behind the API; it must not silently replace demo data with unvalidated LLM output.
+The interaction-checking UI still includes a typed demo dataset so the product can be demonstrated without a verified interaction repository. The FastAPI interaction schema is designed for validated interaction records, with `evidence`, `last_verified`, and `requires_clinician_review` required on every interaction. Prescription analysis is an informational AI summary, not a validated clinical interaction check; confirm all findings with a clinician or pharmacist.
 
-Environment placeholders for PostgreSQL, Neo4j, OCR, RxNorm, and optional explanation services are in `.env.example`. Never commit credentials or prescription images.
+Provider placeholders are in `apps/api/.env.example`. Never commit credentials or prescription images.
 
 ## Accessibility
 

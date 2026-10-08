@@ -7,3 +7,5 @@ pymongo==4.10.1
 PyJWT==2.10.1
 email-validator==2.2.0
 python-dotenv==1.0.1
+python-multipart==0.0.20
+openai>=1.66.0,<3

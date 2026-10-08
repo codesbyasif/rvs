@@ -11,7 +11,24 @@ import type { LucideIcon } from "lucide-react";
 
 type Severity = "High" | "Moderate" | "Monitor";
 type View = "home" | "medicines" | "alerts" | "doctor" | "graph";
-const medicines: { name: string; dose: string; frequency: string; confidence: number }[] = [];
+type PrescriptionMedicineAnalysis = {
+  medicine_name: string;
+  strength: string | null;
+  dosage: string | null;
+  frequency: string | null;
+  timing: string | null;
+  duration: string | null;
+  instructions: string | null;
+};
+type PrescriptionAnalysis = {
+  medicines: PrescriptionMedicineAnalysis[];
+  side_effects: string[];
+  drug_drug_interactions: string[];
+  drug_food_interactions: string[];
+  warnings: string[];
+};
+type PrescriptionResult = { ocr_text: string; analysis: PrescriptionAnalysis };
+type UploadStage = "Uploading" | "Reading prescription" | "Analyzing";
 
 const navItems: { id: View; label: string; icon: LucideIcon }[] = [
   { id: "home", label: "Home", icon: HomeIcon }, { id: "medicines", label: "My medicines", icon: Pill },
@@ -113,12 +130,27 @@ function DoctorView() {
   return <><div className="page-heading"><div><span className="eyebrow">Ready to share</span><h2>Report summary</h2><p className="muted">Your report will be generated after medicines and safety results are available.</p></div><button className="button primary" disabled><FileText size={17} /> Download summary</button></div><div className="empty-state"><div className="upload-icon"><FileText size={25} /></div><h3>Your report is not ready yet</h3><p className="muted">Process a prescription or add medicines first. The report generator will use your real medication and alert data.</p></div></>;
 }
 
+function AnalysisList({ title, items }: { title: string; items: string[] }) {
+  return <section className="analysis-group"><h3>{title}</h3>{items.length ? <ul>{items.map((item, index) => <li key={`${title}-${index}`}>{item}</li>)}</ul> : <p className="muted">None identified in the available prescription text.</p>}</section>;
+}
+
+function isPrescriptionResult(value: unknown): value is PrescriptionResult {
+  if (typeof value !== "object" || value === null || !("ocr_text" in value) || !("analysis" in value)) return false;
+  const analysis = value.analysis;
+  if (typeof value.ocr_text !== "string" || typeof analysis !== "object" || analysis === null) return false;
+  const analysisFields = analysis as Record<string, unknown>;
+  return ["medicines", "side_effects", "drug_drug_interactions", "drug_food_interactions", "warnings"]
+    .every((key) => key in analysisFields && Array.isArray(analysisFields[key]));
+}
+
 function UploadModal({ close }: { close: () => void }) {
-  const [step, setStep] = useState<"upload" | "review">("upload");
+  const [step, setStep] = useState<"upload" | "processing" | "result">("upload");
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState("");
   const [error, setError] = useState("");
   const [dragging, setDragging] = useState(false);
+  const [stage, setStage] = useState<UploadStage>("Uploading");
+  const [result, setResult] = useState<PrescriptionResult | null>(null);
 
   useEffect(() => () => { if (previewUrl) URL.revokeObjectURL(previewUrl); }, [previewUrl]);
 
@@ -126,10 +158,16 @@ function UploadModal({ close }: { close: () => void }) {
     if (!candidate) return;
     const supported = ["image/jpeg", "image/png", "application/pdf"];
     if (!supported.includes(candidate.type)) {
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      setFile(null);
+      setPreviewUrl("");
       setError("Please choose a JPG, PNG, or PDF prescription.");
       return;
     }
     if (candidate.size > 10 * 1024 * 1024) {
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      setFile(null);
+      setPreviewUrl("");
       setError("This file is larger than 10 MB. Please choose a smaller file.");
       return;
     }
@@ -139,7 +177,53 @@ function UploadModal({ close }: { close: () => void }) {
     setError("");
   };
 
-  return <div className="modal-backdrop" role="presentation"><div className="modal" role="dialog" aria-modal="true" aria-labelledby="upload-title"><button className="modal-close" onClick={close} aria-label="Close"><X size={20} /></button>{step === "upload" ? <><div className="eyebrow">Step 1 of 3</div><h2 id="upload-title">Upload your prescription</h2><p className="muted">Choose a clear photo or PDF. The OCR service will process it after integration.</p><label className={`upload-zone ${dragging ? "dragging" : ""}`} onDragOver={(event) => { event.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={(event) => { event.preventDefault(); setDragging(false); acceptFile(event.dataTransfer.files[0]); }}><input className="file-input" type="file" accept="image/jpeg,image/png,application/pdf" onChange={(event) => acceptFile(event.target.files?.[0])} /><div className="upload-icon"><Upload size={25} /></div><strong>{file ? "Prescription ready to review" : "Drop a prescription here"}</strong><span>{file ? file.name : "or choose a clear photo or PDF"}</span><span className="button primary"><Upload size={17} /> {file ? "Choose another file" : "Choose file"}</span><small>JPG, PNG or PDF · Max 10 MB</small></label>{error && <div className="upload-error" role="alert"><AlertTriangle size={17} />{error}</div>}{file && <div className="file-preview">{previewUrl ? <img src={previewUrl} alt="Selected prescription preview" /> : <FileText size={21} />}<div><strong>{file.name}</strong><span>{(file.size / 1024 / 1024).toFixed(2)} MB · Ready for demo OCR review</span></div><Check size={19} /></div>}<div className="privacy-note"><ShieldCheck size={17} /><span>Your prescription stays private in this demo.</span></div>{file && <button className="button primary full" onClick={() => setStep("review")}>Review medicines found <ArrowRight size={17} /></button>}</> : <><div className="eyebrow">Step 2 of 3</div><h2 id="upload-title">Review medicines found</h2><p className="muted">We read these from your prescription. Please check each one before continuing.</p><div className="review-list">{medicines.slice(0, 3).map(m => <div className="review-row" key={m.name}><div><strong>{m.name}</strong><span>{m.dose} · {m.frequency}</span></div><span className="confidence good">{m.confidence}% match</span></div>)}</div><div className="low-confidence"><AlertTriangle size={18} /><div><strong>Please check this medicine name</strong><p>Atorvastatin was harder to read. Confirm it before checking interactions.</p></div></div><button className="button primary full" onClick={close}>Check interactions <ArrowRight size={17} /></button></>}</div></div>;
+  const analyzePrescription = async () => {
+    if (!file) return;
+    setError("");
+    setResult(null);
+    setStage("Uploading");
+    setStep("processing");
+    const timers = [
+      window.setTimeout(() => setStage("Reading prescription"), 700),
+      window.setTimeout(() => setStage("Analyzing"), 1800)
+    ];
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"}/api/prescription/analyze`, {
+        method: "POST",
+        body: formData
+      });
+      const data: unknown = await response.json().catch(() => null);
+      if (!response.ok) {
+        const detail = typeof data === "object" && data !== null && "detail" in data && typeof data.detail === "string"
+          ? data.detail
+          : "Unable to analyze this prescription.";
+        throw new Error(detail);
+      }
+      if (!isPrescriptionResult(data)) throw new Error("The analysis service returned an invalid result. Please try again.");
+      setResult(data);
+      setStep("result");
+    } catch (requestError) {
+      setError(requestError instanceof TypeError
+        ? "Cannot reach the MedSafe API. Start it with `npm run dev:all` and make sure port 8000 is available."
+        : requestError instanceof Error ? requestError.message : "Unable to analyze this prescription.");
+      setStep("upload");
+    } finally {
+      timers.forEach(window.clearTimeout);
+    }
+  };
+
+  const resetUpload = () => {
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    setFile(null);
+    setPreviewUrl("");
+    setResult(null);
+    setError("");
+    setStep("upload");
+  };
+
+  return <div className="modal-backdrop" role="presentation"><div className={`modal ${step === "result" ? "prescription-result-modal" : ""}`} role="dialog" aria-modal="true" aria-labelledby="upload-title"><button className="modal-close" onClick={close} aria-label="Close"><X size={20} /></button>{step === "upload" ? <><div className="eyebrow">Prescription analysis</div><h2 id="upload-title">Upload your prescription</h2><p className="muted">Choose a clear photo or PDF. We will read the prescription and prepare an AI-generated summary for you to review.</p><label className={`upload-zone ${dragging ? "dragging" : ""}`} onDragOver={(event) => { event.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={(event) => { event.preventDefault(); setDragging(false); acceptFile(event.dataTransfer.files[0]); }}><input className="file-input" type="file" accept="image/jpeg,image/png,application/pdf" onChange={(event) => acceptFile(event.target.files?.[0])} /><div className="upload-icon"><Upload size={25} /></div><strong>{file ? "Prescription ready to analyze" : "Drop a prescription here"}</strong><span>{file ? file.name : "or choose a clear photo or PDF"}</span><span className="button primary"><Upload size={17} /> {file ? "Choose another file" : "Choose file"}</span><small>JPG, PNG or PDF · Max 10 MB</small></label>{error && <div className="upload-error" role="alert"><AlertTriangle size={17} />{error}</div>}{file && <div className="file-preview">{previewUrl ? <img src={previewUrl} alt="Selected prescription preview" /> : <FileText size={21} />}<div><strong>{file.name}</strong><span>{(file.size / 1024 / 1024).toFixed(2)} MB · Sent to OCR.space and Groq; not retained by MedSafe</span></div><Check size={19} /></div>}<div className="privacy-note"><ShieldCheck size={17} /><span>Your prescription is sent to OCR.space and Groq for processing and is not retained by MedSafe.</span></div>{file && <button className="button primary full" onClick={analyzePrescription}>Analyze prescription <ArrowRight size={17} /></button>}</> : step === "processing" ? <><div className="eyebrow">Secure processing</div><h2 id="upload-title">Analyzing your prescription</h2><p className="muted">This can take a little while. Keep this window open.</p><div className="prescription-stages" role="status" aria-live="polite">{(["Uploading", "Reading prescription", "Analyzing"] as UploadStage[]).map((item, index) => { const stages = ["Uploading", "Reading prescription", "Analyzing"]; const activeIndex = stages.indexOf(stage); return <div className={`prescription-stage ${index < activeIndex ? "complete" : ""} ${item === stage ? "active" : ""}`} key={item}><span>{index < activeIndex ? <Check size={16} /> : index + 1}</span><strong>{item}</strong></div>; })}</div><p className="privacy-note"><ShieldCheck size={17} />Prescription data is processed by OCR.space and Groq and is not retained by MedSafe.</p></> : result && <><div className="eyebrow">Prescription analysis · AI-generated</div><h2 id="upload-title">Review your results</h2><p className="muted">Check these details against the original prescription. AI can make mistakes.</p><div className="prescription-analysis">{result.analysis.medicines.length ? result.analysis.medicines.map((medicine, index) => <section className="analysis-medicine" key={`${medicine.medicine_name}-${index}`}><h3>{medicine.medicine_name}</h3><dl>{[["Strength", medicine.strength], ["Dosage", medicine.dosage], ["Frequency", medicine.frequency], ["Timing", medicine.timing], ["Duration", medicine.duration], ["Instructions", medicine.instructions]].filter((item): item is [string, string] => Boolean(item[1])).map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl></section>) : <p className="muted">No medicine names could be identified. Please check the OCR text below.</p>}<AnalysisList title="Possible side effects" items={result.analysis.side_effects} /><AnalysisList title="Possible drug-drug interactions" items={result.analysis.drug_drug_interactions} /><AnalysisList title="Possible drug-food interactions" items={result.analysis.drug_food_interactions} /><AnalysisList title="Warnings" items={result.analysis.warnings} /><details className="ocr-text"><summary>View extracted prescription text</summary><pre>{result.ocr_text}</pre></details></div><div className="clinical-note"><Stethoscope size={19} /><div><strong>Important</strong><p>This AI summary is not medical advice and interaction information is not verified. Confirm all details with your doctor or pharmacist before making any medicine decisions.</p></div></div><div className="prescription-result-actions"><button className="button secondary" onClick={resetUpload}>Analyze another</button><button className="button primary" onClick={close}>Done <Check size={17} /></button></div></>}</div></div>;
 }
 
 export default function Home() {
