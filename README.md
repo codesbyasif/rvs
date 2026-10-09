@@ -1,104 +1,142 @@
 # MedSafe
 
-MedSafe is a calm, elderly-first prototype for understanding possible drug-drug and drug-food interactions. It is intentionally a clinical decision-support demo, not a diagnosis, prescription, or substitute for a doctor or pharmacist.
+MedSafe is a responsive medication-safety prototype for patients, families, and care teams. It demonstrates how people can review medicine information, possible interactions, and prescription summaries in one place. It is not a diagnosis, prescription, or substitute for a doctor or pharmacist.
 
-## What is included
+## Website structure
 
-- Responsive Next.js/React/TypeScript experience with dashboard, medicines, safety alerts, interaction graph, and doctor summary views.
-- Doctor signup prototype at `/doctor-signup` with required medical credential and current-workplace proof fields for manual verification.
-- A prescription upload and OCR/Groq analysis flow with extracted text, medicine details, possible interactions, and safety warnings.
-- Browser voice playback for important explanations.
-- English/Hindi language controls in the UI foundation.
-- FastAPI demo interaction service with typed Pydantic schemas and a provider-ready boundary.
-- Clearly labeled demo knowledge and identifiers; no clinical evidence is presented as validated.
+The website uses the Next.js App Router. The dashboard views (Home, My medicines, Safety alerts, Interaction graph, and Report summary) are sections inside the home page rather than separate URLs.
 
-## Structure
+| URL | Purpose |
+| --- | --- |
+| `/` | Medication-safety dashboard with the demo medicine list, alerts, interaction graph, report summary, account controls, and prescription-analysis dialog. |
+| `/login` | Sign in, create an account, or request a one-time email password-reset code. |
+| `/reset-password` | Set a new password from a reset link containing a token. |
+| `/doctor-signup` | Submit clinician contact and registration details with qualification and current-workplace documents for manual review. |
+| `/admin` | Password-protected review queue for approving or rejecting doctor applications and viewing submitted documents. |
+
+### Source layout
 
 ```text
-app/                    Next.js UI and design system
-apps/api/app/main.py    FastAPI demo service
-apps/api/tests/         API tests
-apps/api/.env.example   Backend OCR and Groq environment template
+app/
+  api/
+    admin/
+      applications/route.ts    Admin application list and review actions
+      documents/route.ts       Protected access to submitted documents
+      session/route.ts         Admin sign-in, session check, and sign-out
+    doctor-applications/
+      route.ts                 Doctor application submission
+  admin/page.tsx               Doctor verification dashboard
+  doctor-signup/page.tsx       Clinician application form
+  login/page.tsx               Sign-in, signup, and email-code recovery
+  reset-password/page.tsx      Reset-link password form
+  page.tsx                     Main dashboard and interactive views
+  layout.tsx                   Shared document metadata and global stylesheet
+  globals.css                  Website styles and responsive layouts
+lib/
+  admin-auth.ts                Admin password and signed session helpers
+  doctor-applications.ts       Local application record storage and updates
+public/
+  medsafe-logo.svg             Shared MedSafe logo
+apps/api/
+  app/main.py                  FastAPI authentication, interaction, and OCR API
+  requirements.txt             Python API dependencies
+  tests/                       API tests
+  .env.example                 OCR and Groq key template
 ```
 
+## Dashboard features
+
+- Patient-friendly home screen with an age and health-condition entry point. Sign-in is required before entering health details or uploading a prescription.
+- Dashboard sections for medicines, safety alerts, an interaction graph, and a report summary.
+- English and Hindi language controls, user-initiated browser text-to-speech, and responsive navigation.
+- Prescription upload accepts JPG, PNG, and PDF files up to 10 MB. The backend sends the file to OCR.space, then submits extracted text to Groq for an AI-generated summary of medicines, dosage details, possible side effects, drug-drug and drug-food interactions, and warnings.
+- Authentication screens support signup, sign-in, email-code password recovery, and token-link password reset.
+- Doctor applications collect contact and professional registration information plus a qualification certificate and proof of current workplace. Each document must be a PDF, JPG, or PNG up to 2 MB.
+- Admin review lets a reviewer inspect application details and documents, then mark an application verified or rejected.
+
 ## Run locally
+
+From the repository root in PowerShell:
 
 ```powershell
 npm install
 npm run setup:api
-npm run dev
+npm run dev:all
 ```
 
-Open `http://localhost:3000`. To run both the web app and API together, use
-`npm run dev:all` after the one-time API setup. The API setup creates a local
-virtual environment and installs `apps/api/requirements.txt`.
+Open `http://localhost:3000`. `npm run dev:all` starts the Next.js website and the FastAPI backend on port `8000`; the backend setup creates `apps/api/.venv` and installs `apps/api/requirements.txt`. To run only the website, use `npm run dev`.
 
-For prescription analysis, copy `apps/api/.env.example` to `apps/api/.env` and
-set `OCR_API_KEY` and `GROQ_API_KEY` there. Obtain the OCR key from OCR.space
-and the Groq key from GroqCloud. The API uses Groq's Responses API with the
-`openai/gpt-oss-20b` model. These credentials are read only from the backend
-`.env`; do not add them to the frontend project `.env` or to `NEXT_PUBLIC_*`
-variables.
-The upload endpoint accepts JPG, PNG, and PDF files up to 10 MB, processes
-them without saving them in the MedSafe application, and sends them to
-OCR.space followed by the Groq API. Both external providers receive
-prescription data for processing.
+### Configure environment variables
 
-`POST /api/prescription/analyze` accepts a multipart form field named `file`.
-Its JSON response contains `ocr_text` and an `analysis` object with medicines,
-side effects, possible drug-drug and drug-food interactions, and warnings.
-Run API tests from `apps/api` with
-`.\.venv\Scripts\python.exe -m pytest tests`.
+Copy `apps/api/.env.example` to `apps/api/.env` and set `OCR_API_KEY` and `GROQ_API_KEY` to your own provider credentials to enable prescription analysis. The backend reads these values from `apps/api/.env` or the project-root `.env`. Never put provider credentials in frontend code or `NEXT_PUBLIC_*` variables.
 
-To set up the API manually instead:
+Create a project-root `.env` for features that need application configuration:
+
+```dotenv
+MONGODB_URI=
+MONGODB_DATABASE=medsafe
+JWT_SECRET=
+ADMIN_REVIEW_PASSWORD=
+SMTP_HOST=
+SMTP_PORT=587
+SMTP_FROM_EMAIL=
+SMTP_USERNAME=
+SMTP_PASSWORD=
+SMTP_USE_SSL=false
+FRONTEND_ORIGINS=http://localhost:3000
+```
+
+Set a long random `JWT_SECRET` (at least 32 characters) and an `ADMIN_REVIEW_PASSWORD` of at least 12 characters. MongoDB configuration is required for persistent account signup and sign-in. Email recovery also requires the SMTP settings; use an app password for email providers such as Gmail. `SMTP_USERNAME` and `SMTP_PASSWORD` may be left blank when using an unauthenticated mail relay. Set `SMTP_USE_SSL=true` for implicit TLS, commonly on port `465`. Restart the relevant server after changing environment variables.
+
+The frontend uses `http://localhost:8000` as the default API URL. Set `NEXT_PUBLIC_API_URL` at build/runtime when the API is hosted elsewhere. Configure `FRONTEND_ORIGINS` on the API to allow the website's origin.
+
+### Run the API manually
 
 ```powershell
 cd apps/api
 python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8000
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --port 8000
 ```
 
-### MongoDB authentication setup
+Run the API tests from `apps/api` with:
 
-Copy `.env.example` to `.env` and set `MONGODB_URI`, `MONGODB_DATABASE`, and a
-long random `JWT_SECRET`. The API exposes:
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests
+```
 
-- `POST /api/auth/signup`
-- `POST /api/auth/login`
-- `POST /api/auth/forgot-password`
-- `POST /api/auth/reset-password/otp`
-- `POST /api/auth/reset-password`
+## API endpoints
 
-The frontend auth screens are available at `/login` and `/reset-password`.
-Password recovery emails a six-digit, single-use code that expires after 10
-minutes. Configure `SMTP_HOST` and `SMTP_FROM_EMAIL` in the project-root
-`.env`; authenticated providers also need `SMTP_USERNAME` and `SMTP_PASSWORD`.
-`SMTP_PORT` defaults to `587`; set `SMTP_USE_SSL=true` for implicit TLS on
-providers using port `465`. For Gmail, use an App Password rather than your
-regular account password. Restart the API after changing `.env`. Recovery
-requires MongoDB and a `JWT_SECRET` of at least 32 characters. Authentication
-is MongoDB-backed when `MONGODB_URI` is configured; without it, auth endpoints
-return an explicit service-unavailable response rather than pretending to
-persist users.
+The FastAPI service is implemented in `apps/api/app/main.py`.
 
-## Architecture and safety
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/health` | API health check. |
+| `POST` | `/api/auth/signup` | Create a MongoDB-backed account. |
+| `POST` | `/api/auth/login` | Authenticate and return an access token. |
+| `POST` | `/api/auth/forgot-password` | Send a one-time password-reset code by email. |
+| `POST` | `/api/auth/reset-password/otp` | Reset a password with an email code. |
+| `POST` | `/api/auth/reset-password` | Reset a password using a token link. |
+| `POST` | `/api/prescription/analyze` | Accept a multipart `file` upload and return OCR text with a structured AI summary. |
+| `POST` | `/api/interactions/check` | Check medicine and food inputs against the demo interaction dataset. |
+| `GET` | `/api/interactions/{interaction_id}` | Retrieve a demo interaction by ID. |
+| `GET` | `/api/graph` | Return the demo interaction graph data. |
 
-Doctor signup submissions are saved by `POST /api/doctor-applications`. The route stores uniquely named documents and an append-only `uploads/doctor-applications.jsonl` record in the project root. The directory is created on first submission. Treat this local prototype storage as sensitive: configure access controls, retention, backups, and a secure deployment storage strategy before collecting real clinician documents.
+The Next.js application also provides `/api/doctor-applications` for clinician submissions and `/api/admin/*` endpoints for admin sessions, application review, and protected document access.
 
-## Admin doctor verification
+## Data handling and clinical safety
 
-Open `/admin` (also linked from the home page) to sign in, review submitted doctor details and documents, then mark an application verified or rejected. Configure only `ADMIN_REVIEW_PASSWORD` (at least 12 characters; 16 or more is recommended) in the project-root `.env`, then restart the dev server. Keep the password private. The admin session is an HttpOnly, SameSite=Strict cookie with an eight-hour lifetime, signed using the configured password; changing the password invalidates existing sessions. This single-password approach is intended only for a local prototype, not a production admin system. Approval verifies application credentials for this prototype only; it does not automatically create or promise a consultant job.
-
-The interaction-checking UI still includes a typed demo dataset so the product can be demonstrated without a verified interaction repository. The FastAPI interaction schema is designed for validated interaction records, with `evidence`, `last_verified`, and `requires_clinician_review` required on every interaction. Prescription analysis is an informational AI summary, not a validated clinical interaction check; confirm all findings with a clinician or pharmacist.
-
-Provider placeholders are in `apps/api/.env.example`. Never commit credentials or prescription images.
+- Prescription uploads are limited to 10 MB, are processed by OCR.space and Groq, and are not saved by the MedSafe application. Both providers receive prescription data for processing. Their own retention and privacy terms apply.
+- Doctor application details and verification documents are saved locally under `uploads/`, with application records appended to `uploads/doctor-applications.jsonl`. This prototype storage is sensitive; configure access controls, retention, backups, and secure deployment storage before collecting real clinician documents.
+- The admin interface uses a single configured review password and an HttpOnly, SameSite=Strict session cookie with an eight-hour lifetime. This is a local prototype mechanism, not a production admin identity system.
+- Admin approval records a manual review decision; it does not automatically create or promise a consultant job.
+- Interaction checking uses fictional demo data and identifiers. Demo interaction evidence is explicitly marked as requiring replacement with a validated source. Prescription analysis is AI-generated and is not a validated clinical interaction check. Review all findings with a clinician or pharmacist.
+- Never commit credentials, real prescription images, or real patient data.
 
 ## Accessibility
 
-The prototype uses semantic controls, visible keyboard focus, readable base text, large touch targets, severity labels in addition to color, responsive layout, `role="alert"`/status patterns where relevant, and reduced-motion support. Voice is intentionally user initiated and uses the browser SpeechSynthesis API.
+The prototype uses semantic controls, visible keyboard focus, readable text, large touch targets, text labels in addition to severity color, responsive layouts, status/alert announcements where relevant, and reduced-motion support. Voice playback is user initiated and uses the browser SpeechSynthesis API.
 
-## Demo data and disclaimer
+## Demo disclaimer
 
-The profile (Ramesh Kumar, age 68) and all interaction sources are fictional demo data. “Demo interaction — replace with a validated source before clinical use” is shown wherever evidence is referenced. Do not stop, start, substitute, or change a medicine based on this prototype.
+The sample patient profile and interaction records are fictional. Do not start, stop, substitute, or change a medicine based on this prototype.
